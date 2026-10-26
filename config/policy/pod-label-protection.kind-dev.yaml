@@ -1,0 +1,62 @@
+# DEV ONLY -- do not apply to a shared or production cluster.
+#
+# Same policy as pod-label-protection.yaml, with one difference: `allowedUsers`
+# also contains `kubernetes-admin`.
+#
+# `make run` uses the kubeconfig identity, which is `kubernetes-admin` for
+# kind's default kubeconfig. Cluster-admin privileges do not bypass this policy,
+# so local development needs the exemption. Anyone using that same identity
+# can also change reserved labels; do not use this exemption on shared clusters.
+#
+# Keep the expressions below in sync with pod-label-protection.yaml.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: warmpool-protect-reserved-labels
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: prefix
+      expression: "'warmpool.linkedin.com/'"
+    - name: allowedUsers
+      expression: >-
+        ['system:serviceaccount:warmpool-system:warmpool-controller',
+         'kubernetes-admin']
+    - name: newLabels
+      expression: "has(object.metadata.labels) ? object.metadata.labels : {}"
+    - name: oldLabels
+      expression: >-
+        (oldObject != null && has(oldObject.metadata.labels))
+          ? oldObject.metadata.labels : {}
+    - name: newReserved
+      expression: >-
+        variables.newLabels.filter(k, k.startsWith(variables.prefix))
+          .map(k, k + '=' + variables.newLabels[k])
+    - name: oldReserved
+      expression: >-
+        variables.oldLabels.filter(k, k.startsWith(variables.prefix))
+          .map(k, k + '=' + variables.oldLabels[k])
+  validations:
+    - expression: >-
+        request.userInfo.username in variables.allowedUsers ||
+        (size(variables.newReserved) == size(variables.oldReserved) &&
+         variables.newReserved.all(e, e in variables.oldReserved))
+      messageExpression: >-
+        'labels under ' + variables.prefix + ' are owned by the warmpool controller and cannot be set or changed by ' +
+        request.userInfo.username
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: warmpool-protect-reserved-labels
+spec:
+  policyName: warmpool-protect-reserved-labels
+  validationActions: ["Deny"]
+  matchResources: {}

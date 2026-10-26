@@ -1,0 +1,8 @@
+apiVersion: linkedin.com/v1alpha1
+kind: WorkerClaim
+metadata:
+  name: demo-claim
+  namespace: warmpool-demo
+spec:
+  # Must name a WorkerPool in this namespace. Immutable once set.
+  poolName: default

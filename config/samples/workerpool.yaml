@@ -1,0 +1,37 @@
+apiVersion: linkedin.com/v1alpha1
+kind: WorkerPool
+metadata:
+  name: default
+  namespace: warmpool-demo
+spec:
+  # Desired ready, unclaimed capacity; readiness and reconciliation are asynchronous.
+  # Claimed Pods are additional workers, not part of this target.
+  warmReplicas: 3
+
+  # What happens to a Pod when the WorkerClaim holding it is deleted.
+  # Delete is the only supported value: a claimed Pod is never returned to the
+  # warm set, since the controller cannot verify it is free of the previous
+  # claimant's residue.
+  claimPolicy: Delete
+
+  template:
+    metadata:
+      labels:
+        app: warm-worker
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: worker
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi

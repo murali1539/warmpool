@@ -1,0 +1,75 @@
+# Restricts reserved Pod labels to the configured controller identity.
+#
+# Pool ownership controls membership, while reserved labels route events and
+# mark workers as claimed. Changing a claim label can make an assigned worker
+# appear unclaimed. RBAC cannot restrict writes to individual metadata keys.
+#
+# This policy checks labels only, not annotations or owner references.
+#
+# NOTE: a cluster-admin does NOT bypass a ValidatingAdmissionPolicy. Only the
+# identities listed in `allowedUsers` below may write these keys, so that list
+# must contain whatever identity the controller actually runs as. For the
+# out-of-cluster `make run` workflow that is your kubeconfig user, not a
+# ServiceAccount -- see pod-label-protection.kind-dev.yaml.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: warmpool-protect-reserved-labels
+spec:
+  # Reject requests when CEL evaluation fails rather than bypassing protection.
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      # Protect initial labels as well as later edits.
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: prefix
+      expression: "'warmpool.linkedin.com/'"
+
+    # The identities permitted to write reserved labels.
+    - name: allowedUsers
+      expression: "['system:serviceaccount:warmpool-system:warmpool-controller']"
+
+    - name: newLabels
+      expression: "has(object.metadata.labels) ? object.metadata.labels : {}"
+
+    # oldObject is null on CREATE, which is what makes the comparison below
+    # treat "created with reserved labels" as a change from nothing.
+    - name: oldLabels
+      expression: >-
+        (oldObject != null && has(oldObject.metadata.labels))
+          ? oldObject.metadata.labels : {}
+
+    # Reserved keys flattened to "key=value" so the comparison catches a changed
+    # value, not just an added or removed key.
+    - name: newReserved
+      expression: >-
+        variables.newLabels.filter(k, k.startsWith(variables.prefix))
+          .map(k, k + '=' + variables.newLabels[k])
+    - name: oldReserved
+      expression: >-
+        variables.oldLabels.filter(k, k.startsWith(variables.prefix))
+          .map(k, k + '=' + variables.oldLabels[k])
+  validations:
+    # Equal sizes plus membership compare the reserved key/value sets.
+    - expression: >-
+        request.userInfo.username in variables.allowedUsers ||
+        (size(variables.newReserved) == size(variables.oldReserved) &&
+         variables.newReserved.all(e, e in variables.oldReserved))
+      messageExpression: >-
+        'labels under ' + variables.prefix + ' are owned by the warmpool controller and cannot be set or changed by ' +
+        request.userInfo.username
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: warmpool-protect-reserved-labels
+spec:
+  policyName: warmpool-protect-reserved-labels
+  validationActions: ["Deny"]
+  # Apply to direct Pod writes in every namespace, not just namespaces with pools.
+  matchResources: {}
