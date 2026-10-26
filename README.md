@@ -393,7 +393,6 @@ For additional lifecycle checks, deleting a claim should delete its bound Pod. T
 - No per-reconcile create/delete batch cap, custom capacity metrics, or packaged in-cluster
   deployment.
 
-`TODO.md` contains historical planning notes and is not an up-to-date implementation checklist.
 The behavior described here is based on the current controllers, API types, and manifests.
 
 ## Cleanup
